@@ -113,6 +113,28 @@ class SideVehicleTracker:
                 
         self.closest_vehicle = closest
         
+    def is_reliable_no_vehicle(self, min_clear_duration=2000):
+        """检查是否可靠的无车状态（需要连续一段时间无车）"""
+        current_time = time.time() * 1000
+        
+        # 如果当前有车，直接返回False
+        if self.closest_vehicle and self.closest_vehicle['distance'] > 0:
+            return False
+        
+        # 检查历史数据，确保连续min_clear_duration毫秒内都无车
+        if len(self.data_history) < 3:  # 至少需要3个数据点
+            return False
+            
+        clear_duration = 0
+        for data_point in reversed(self.data_history):
+            if data_point['distance'] > 0:  # 历史上有车
+                return False
+            clear_duration = current_time - data_point['time'] * 1000
+            if clear_duration >= min_clear_duration:
+                break
+        
+        return clear_duration >= min_clear_duration
+        
     def get_filtered_data(self):
         """获取滤波后的数据"""
         if not self.closest_vehicle:

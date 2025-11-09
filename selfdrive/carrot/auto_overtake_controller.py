@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-自动超车主控制器 - 修复完整版
+自动超车主控制器 - 优化版
 集成所有模块的核心控制器类
 """
 
@@ -48,15 +48,9 @@ try:
     from common.params import Params
     from common.filter_simple import FirstOrderFilter
     OP_AVAILABLE = True
-    print("✅ OpenPilot环境检测成功")
 except ImportError:
     print("❌ 错误：未找到OpenPilot环境")
     sys.exit(1)
-
-DEBUG = False
-def debug_print(*args, **kwargs):
-    if DEBUG:
-        print(*args, **kwargs)
 
 class AutoOvertakeController:
     """
@@ -109,8 +103,6 @@ class AutoOvertakeController:
         self.data_thread = None
         self.web_server = None
 
-        print("✅ 控制器初始化完成 - v3.7 多源验证与远距离超车优化版")
-
     def calculate_lane_count(self):
         """根据当前模式计算车道总数"""
         mode = self.config['lane_count_mode']
@@ -128,7 +120,6 @@ class AutoOvertakeController:
                 self.config['lane_count'] = op_lane_count
                 return op_lane_count
             else:
-                debug_print("⚠️ OP车道总数获取失败，使用自动模式")
                 lane_count = self._calculate_auto_lane_count()
                 self.config['lane_count'] = lane_count
                 return lane_count
@@ -167,11 +158,9 @@ class AutoOvertakeController:
             else:
                 lane_count = max(2, min(3, lane_count))
 
-            debug_print(f"🛣️ 自动计算车道总数: {estimated_lanes:.1f} → {lane_count}车道")
             return lane_count
         else:
             default_lanes = 3 if self.config['road_type'] == 'highway' else 2
-            debug_print(f"⚠️ 自动计算数据不足，使用默认值: {default_lanes}车道")
             return default_lanes
 
     def _get_op_lane_count(self):
@@ -181,7 +170,6 @@ class AutoOvertakeController:
                 return None
             return None
         except Exception as e:
-            debug_print(f"❌ 获取OP车道总数失败: {e}")
             return None
 
     def update_lane_number(self):
@@ -221,7 +209,6 @@ class AutoOvertakeController:
                     stable_lane = recent_lanes[0]
                     if stable_lane != self.config['current_lane_number']:
                         self.config['current_lane_number'] = stable_lane
-                        debug_print(f"🛣️ 稳定车道编号: {stable_lane} (总数: {total_lanes})")
                 else:
                     # 读数不稳定，使用众数
                     counter = Counter(self.verification_system.lane_number_history)
@@ -229,15 +216,13 @@ class AutoOvertakeController:
                     if count > len(self.verification_system.lane_number_history) * 0.6:  # 超过60%的读数相同
                         if most_common_lane != self.config['current_lane_number']:
                             self.config['current_lane_number'] = most_common_lane
-                            debug_print(f"🛣️ 众数车道编号: {most_common_lane} (置信度: {count}/{len(self.verification_system.lane_number_history)})")
             else:
                 # 数据不足时直接使用
                 if lane_number != self.config['current_lane_number']:
                     self.config['current_lane_number'] = lane_number
-                    debug_print(f"🛣️ 初始车道编号: {lane_number} (总数: {total_lanes})")
         else:
             # 数据无效时保持原车道
-            debug_print(f"⚠️ 车道数据无效，保持车道: {self.config['current_lane_number']}")
+            pass
 
     def update_vehicle_data(self):
         """更新车辆数据 - 优化侧车数据准确性"""
@@ -315,10 +300,6 @@ class AutoOvertakeController:
                         self.vehicle_data['system_auto_control'] = 1
                     self.vehicle_data['last_op_control_time'] = current_time
                     if old_op_control == 0:
-                        if "隧道" in carrotMan.szPosRoadName:
-                            debug_print("🔄 隧道禁止超车，重置自动超车状态")
-                        else:
-                            debug_print("🔄 OP控制开始，重置自动超车状态")
                         self.control_state['op_control_cooldown'] = 0
                         self.control_state['last_op_control_end_time'] = 0
                 else:
@@ -326,10 +307,6 @@ class AutoOvertakeController:
                     if old_op_control >= 1:
                         self.control_state['last_op_control_end_time'] = current_time
                         self.control_state['op_control_cooldown'] = 3000
-                        if old_op_control == 2:
-                            debug_print(f"🔄 隧道结束，开始{self.control_state['op_control_cooldown']}ms冷却")
-                        else:
-                            debug_print(f"🔄 OP控制结束，开始{self.control_state['op_control_cooldown']}ms冷却")
 
                 carrot_left_blind = carrotMan.leftBlind
                 carrot_right_blind = carrotMan.rightBlind
@@ -358,7 +335,6 @@ class AutoOvertakeController:
                     self.lane_change_cnt += 1
                     self.control_state['overtakeSuccessCount'] += 1
                     self.lane_change_finishing = False
-                    debug_print("🔄 检测到变道完成，强制更新车道序号")
                     self.update_lane_number()
                 if meta.laneChangeState == LaneChangeState.laneChangeFinishing:
                     self.lane_change_finishing = True
@@ -377,7 +353,7 @@ class AutoOvertakeController:
             )
 
         except Exception as e:
-            debug_print(f"更新车辆数据错误: {e}")
+            pass
 
     def _update_side_vehicle_data(self, radarState):
         """更新侧方车辆数据 - 使用跟踪器但保持原有字段"""
@@ -389,6 +365,18 @@ class AutoOvertakeController:
             # 获取滤波后的数据
             left_data = self.left_tracker.get_filtered_data()
             right_data = self.right_tracker.get_filtered_data()
+            
+            # 🆕 新增：可靠性检查
+            left_reliable_no_vehicle = self.left_tracker.is_reliable_no_vehicle(2000)  # 2秒连续无车
+            right_reliable_no_vehicle = self.right_tracker.is_reliable_no_vehicle(2000)
+            
+            # 更新vehicle_data，包含可靠性信息
+            self.vehicle_data.update({
+                'left_reliable_no_vehicle': left_reliable_no_vehicle,
+                'right_reliable_no_vehicle': right_reliable_no_vehicle,
+                'left_track_quality': left_data['track_quality'],
+                'right_track_quality': right_data['track_quality']
+            })
             
             # 关键修复：使用跟踪器数据
             # 左侧车辆数据 - 使用跟踪器数据
@@ -437,13 +425,7 @@ class AutoOvertakeController:
                         'right_lead_relative_speed': 0
                     })
                 
-            # 调试输出
-            if DEBUG and (left_data['vehicle_count'] > 0 or right_data['vehicle_count'] > 0):
-                debug_print(f"🚗 侧车跟踪: 左{left_data['vehicle_count']}辆(质量:{left_data['track_quality']}%), " +
-                           f"右{right_data['vehicle_count']}辆(质量:{right_data['track_quality']}%)")
-                
         except Exception as e:
-            debug_print(f"❌ 更新侧车数据错误: {e}")
             # 出错时使用传统方法
             try:
                 if radarState.leadLeft.status:
@@ -474,7 +456,7 @@ class AutoOvertakeController:
                         'right_lead_relative_speed': 0
                     })
             except Exception as e2:
-                debug_print(f"❌ 传统侧车数据更新也失败: {e2}")
+                pass
 
     def _get_blinker_state(self, left_blinker, right_blinker):
         """获取转向灯状态"""
@@ -616,7 +598,6 @@ class AutoOvertakeController:
             if actual_speed_advantage >= 3:  # 至少3km/h的实际速度优势
                 self.execute_overtake(best_direction)
                 self.control_state['overtakeReason'] = f"{detailed_reason} | 实际速度优势: +{actual_speed_advantage:.1f}km/h"
-                debug_print(f"🎯 智能车道选择: {best_direction}变道 | 评分: {best_score:.1f}% | 速度优势: +{actual_speed_advantage:.1f}km/h")
             else:
                 self.control_state['overtakeState'] = "目标车道无速度优势"
                 self.control_state['overtakeReason'] = f"目标车道速度{target_speed}km/h vs 当前{current_speed_expected}km/h (优势{actual_speed_advantage:.1f}km/h)"
@@ -648,7 +629,6 @@ class AutoOvertakeController:
         if not self.config['shouldReturnToLane']:
             # 重置返回相关状态，但允许继续超车
             if self.control_state['net_lane_changes'] != 0:
-                debug_print("🛣️ 返回功能已关闭，重置净变道次数，但允许超车")
                 self.reset_net_lane_changes()
 
         if self.vehicle_data['system_auto_control'] >= 1:
@@ -698,12 +678,10 @@ class AutoOvertakeController:
         if (self.control_state['return_timer_start'] > 0 and
             current_time - self.control_state['return_timer_start'] > 20000):
 
-            debug_print("⏰ 返回条件长时间不满足，放弃本次返回")
             self.control_state['return_timer_start'] = 0
             self.control_state['return_attempts'] += 1
 
             if self.control_state['return_attempts'] >= self.control_state['max_return_attempts']:
-                debug_print(f"⚠️ 达到最大返回尝试次数({self.control_state['max_return_attempts']})，放弃返回")
                 self.reset_net_lane_changes()
 
     def perform_smart_return(self):
@@ -721,7 +699,6 @@ class AutoOvertakeController:
             return_direction = "LEFT"
         else:
             # 已经在原车道，重置状态
-            debug_print("✅ 已在原车道，重置状态")
             self.reset_net_lane_changes()
             return
 
@@ -749,8 +726,6 @@ class AutoOvertakeController:
             # 🆕 基于原车道的详细返回原因
             current_net = target_lane - current_lane
             self.control_state['overtakeReason'] = f"返回原车道{target_lane} (当前:{current_lane}, 需要{abs(current_net)}次{direction_text}变道)"
-
-            debug_print(f"🔄 {attempt_text}返回: {direction_text}变道 | 目标车道:{target_lane}")
 
     def check_return_completion(self):
         """检查返回是否完成 - 验证是否回到原车道"""
@@ -782,8 +757,6 @@ class AutoOvertakeController:
                 self.control_state['overtakeReason'] = "返回完成，分析道路情况中..."
                 self.control_state['current_status'] = "返回完成"
 
-                debug_print(f"✅ 返回完成: 成功回到原车道{target_lane}")
-
                 # 重置原车道记忆
                 self.control_state['original_lane_number'] = 0
                 self.control_state['lane_memory_start_time'] = 0
@@ -802,8 +775,6 @@ class AutoOvertakeController:
                 direction = "右" if remaining_changes > 0 else "左"
                 self.control_state['overtakeState'] = f"继续返回原车道"
                 self.control_state['overtakeReason'] = f"还需{abs(remaining_changes)}次{direction}变道回到原车道{target_lane}"
-                
-                debug_print(f"🔄 变道完成但未回到原车道，仍需{abs(remaining_changes)}次{direction}变道")
                 
                 # 重置返回尝试次数，允许继续尝试
                 self.control_state['return_attempts'] = 0
@@ -837,14 +808,11 @@ class AutoOvertakeController:
                     self.control_state['return_conditions_met'] = False
                     self.control_state['original_lane_clear'] = False
                     self.update_net_lane_changes(direction, is_auto_overtake=True)
-
-                    debug_print(f"🛣️ 高速公路超车: {direction}变道 | 净变道: {self.control_state['net_lane_changes']}")
                 else:
                     self.reset_net_lane_changes()
-                    debug_print(f"🛣️ 普通道路超车: {direction}变道 | 返回功能已禁用")
             else:
                 # 返回功能关闭时，不记录净变道次数
-                debug_print(f"🛣️ 超车执行: {direction}变道 | 返回功能已关闭")
+                pass
 
             self.control_state['follow_start_time'] = None
             self.control_state['is_following_slow_vehicle'] = False
@@ -858,8 +826,6 @@ class AutoOvertakeController:
             else:
                 self.control_state['overtakeState'] = "→ 准备向右变道超车"
                 self.control_state['current_status'] = "自动右变道"
-
-            debug_print(f"🚀 开始超车: {direction}变道 | 道路类型: {road_type}")
 
     def check_overtake_completion(self):
         """检查超车完成状态 - 修复状态显示"""
@@ -888,8 +854,6 @@ class AutoOvertakeController:
             self.control_state['overtakeReason'] = "变道完成，分析道路情况中..."
             self.control_state['current_status'] = "变道完成"
 
-            debug_print(f"✅ 变道完成: {direction_text}变道成功 | 净变道: {net_changes}")
-
             # 设置定时器，2秒后恢复就绪状态
             self.control_state['completion_timer'] = time.time() * 1000
 
@@ -905,7 +869,6 @@ class AutoOvertakeController:
 
             self.control_state['overtakeState'] = "变道超时"
             self.control_state['overtakeReason'] = "15秒内未检测到变道完成，快速重试"
-            debug_print("❌ 变道超时，未检测到完成信号")
 
             # 设置定时器，3秒后恢复就绪状态
             self.control_state['completion_timer'] = time.time() * 1000
@@ -938,8 +901,6 @@ class AutoOvertakeController:
                 self.control_state['lastOvertakeTime'] = time.time() * 1000
                 self.control_state['last_overtake_result'] = 'success'
 
-                debug_print(f"✅ 手动变道完成: {direction_text}变道 | 状态已重置，自动超车已恢复")
-
     def check_return_timeout(self):
         """检查返回超时"""
         current_time = time.time() * 1000
@@ -951,7 +912,6 @@ class AutoOvertakeController:
         if self.control_state['net_lane_changes'] != 0 and self.control_state['last_auto_overtake_time'] > 0:
             time_since_last_auto = current_time - self.control_state['last_auto_overtake_time']
             if time_since_last_auto > self.control_state['return_timeout']:
-                debug_print(f"⏰ 返回超时({time_since_last_auto/1000:.1f}秒)，清零净变道次数")
                 self.reset_net_lane_changes()
                 return True
         return False
@@ -961,7 +921,6 @@ class AutoOvertakeController:
         # 修复：只有在返回功能启用时才更新净变道次数
         if not self.config['shouldReturnToLane']:
             self.reset_net_lane_changes()
-            debug_print(f"🔄 返回功能已关闭，清零净变道次数")
             return
 
         if is_auto_overtake:
@@ -970,16 +929,13 @@ class AutoOvertakeController:
                 self.control_state['lastOvertakeDirection'] = "LEFT"
                 self.control_state['last_auto_overtake_time'] = time.time() * 1000
                 self.control_state['is_auto_overtake'] = True
-                debug_print(f"🔄 自动超车净变道次数更新: {self.control_state['net_lane_changes']} (方向: {direction})")
             elif direction == "RIGHT":
                 self.control_state['net_lane_changes'] -= 1
                 self.control_state['lastOvertakeDirection'] = "RIGHT"
                 self.control_state['last_auto_overtake_time'] = time.time() * 1000
                 self.control_state['is_auto_overtake'] = True
-                debug_print(f"🔄 自动超车净变道次数更新: {self.control_state['net_lane_changes']} (方向: {direction})")
         else:
             self.reset_net_lane_changes()
-            debug_print(f"🔄 手动变道，清零净变道次数")
 
     def reset_net_lane_changes(self):
         """重置净变道次数"""
@@ -1007,8 +963,7 @@ class AutoOvertakeController:
                 if current_time % 5000 < 100:  # 每5秒检查一次
                     confidence = self.verification_system.lane_change_verification['confidence_score']
                     if confidence < self.verification_system.lane_change_verification['min_confidence']:
-                        debug_print(f"⚠️ 系统置信度较低: {confidence}%，考虑重置")
-                        # 可以在这里添加自动重置逻辑
+                        pass
                 
                 # 🆕 修复：使用正确的变量名和逻辑
                 if current_time - self.last_lane_count_calc > 5000:
@@ -1020,14 +975,7 @@ class AutoOvertakeController:
                 # 🆕 定期检查原车道记忆超时
                 if (self.control_state.get('original_lane_number', 0) > 0 and 
                     current_time - self.control_state.get('return_timeout_timer', 0) > 30000):
-                    debug_print("⏰ 返回超时(30秒)，强制重置")
                     self.reset_net_lane_changes()
-
-                # 🆕 调试信息输出
-                if DEBUG and current_time % 10000 < 100:  # 每10秒输出一次调试信息
-                    debug_print(f"🔍 系统状态: 置信度{self.verification_system.lane_change_verification['confidence_score']}%, " +
-                               f"净变道{self.control_state['net_lane_changes']}, " +
-                               f"车道{self.config['current_lane_number']}")
 
                 # 新增：检查完成定时器，恢复就绪状态
                 if self.control_state.get('completion_timer') and current_time - self.control_state['completion_timer'] > 2000:
@@ -1053,7 +1001,6 @@ class AutoOvertakeController:
                         if (self.control_state['isOvertaking'] and
                             not self.control_state['lane_change_in_progress']):
                             self.control_state['isOvertaking'] = False
-                            debug_print("🔄 检测到异常状态，重置超车标志")
 
                 # 修复：确保手动变道完成检查被调用
                 self.check_manual_lane_change_completion()
@@ -1063,7 +1010,6 @@ class AutoOvertakeController:
 
                 ratekeeper.keep_time()
             except Exception as e:
-                print(f"数据循环错误: {e}")
                 time.sleep(0.1)
 
     def get_status_data(self):
@@ -1118,7 +1064,6 @@ class AutoOvertakeController:
                 self.control_state['current_status'] = "手动右变道中"
                 self.control_state['overtakeState'] = "→ 手动右变道"
             self.control_state['overtakeReason'] = "用户手动变道指令"
-            debug_print(f"🔧 手动变道指令: {direction} | 等待变道完成")
 
     def cancel_overtake(self):
         """取消超车"""
@@ -1144,10 +1089,8 @@ class AutoOvertakeController:
             self.udp_socket.sendto(message, (self.remote_ip, self.remote_port))
             self.control_state['last_command'] = f"{cmd_type}: {arg}"
             self.last_command_time = time.time()
-            print(f"📤 发送指令: {command}")
             return True
         except Exception as e:
-            print(f"❌ 发送指令错误: {e}")
             return False
 
     def save_persistent_config(self):

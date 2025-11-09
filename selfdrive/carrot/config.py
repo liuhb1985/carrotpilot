@@ -111,23 +111,19 @@ class Config:
             config_json = self.params.get("AutoOvertakeConfig")
             if config_json is not None:
                 saved_config = json.loads(config_json)
-                print(f"📥 加载保存的配置")
                 # 只更新已存在的配置项
                 for key, value in saved_config.items():
                     if key in self.config:
                         self.config[key] = value
-            else:
-                print("📥 使用默认配置")
         except Exception as e:
-            print(f"⚠️ 加载配置失败: {e}")
+            pass
 
     def save_persistent_config(self):
         """保存配置到持久化存储"""
         try:
             self.params.put("AutoOvertakeConfig", json.dumps(self.config))
-            print("✅ 配置已保存")
         except Exception as e:
-            print(f"⚠️ 保存配置失败: {e}")
+            pass
 
     def get(self, key, default=None):
         """获取配置值"""

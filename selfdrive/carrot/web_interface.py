@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Web界面模块 - 修复完整版
+Web界面模块 - 优化版
 负责HTTP服务器和Web界面处理
 """
 
@@ -28,7 +28,7 @@ class WebInterface:
                 elif self.path == '/status':
                     self.send_json_status()
                 else:
-                    print(f"page {self.path} not found!")
+                    pass
 
             def do_POST(self):
                 """处理POST请求"""
@@ -48,7 +48,6 @@ class WebInterface:
                     else:
                         self.send_error(404, "接口未找到")
                 except Exception as e:
-                    print(f"请求处理错误: {e}")
                     self.send_error(400, "请求解析错误")
 
             def handle_control(self, data):
@@ -104,7 +103,6 @@ class WebInterface:
                     # 如果关闭返回功能，重置相关状态
                     if not new_return and old_return:
                         controller.reset_net_lane_changes()
-                        print("🔄 用户关闭返回功能，重置净变道次数")
                     
                     # 状态自然恢复为"等待超车条件"
                     self.send_json_response({'status': 'success', 'returnToLane': controller.config['shouldReturnToLane']})
@@ -142,7 +140,6 @@ class WebInterface:
 
                     if old_road_type == 'highway' and new_road_type == 'normal':
                         controller.reset_net_lane_changes()
-                        print("🛣️ 切换到普通道路，重置返回状态")
 
                     controller.calculate_lane_count()
                     controller.save_persistent_config()
@@ -178,7 +175,6 @@ class WebInterface:
                             # 修复：将分钟转换为毫秒
                             minutes = float(data[web_key])
                             controller.config[config_key] = int(minutes * 60 * 1000)  # 分钟 → 毫秒
-                            print(f"⏰ 最大跟车时间设置: {minutes}分钟 → {controller.config[config_key]}毫秒")
                         elif web_key == 'speedRatio' or web_key == 'earlyOvertakeSpeedRatio':
                             controller.config[config_key] = float(data[web_key]) / 100.0
                         else:
@@ -229,5 +225,4 @@ class WebInterface:
         """启动Web服务器"""
         handler = self.create_web_handler()
         self.web_server = HTTPServer(('0.0.0.0', 8088), handler)
-        print("🌐 Web服务器启动在端口 8088")
         self.web_server.serve_forever()

@@ -404,6 +404,10 @@ class CarrotMan:
     l_blindspot_time = time.time()
     r_blindspot_alive = False
     r_blindspot_time = time.time()
+    lidar_lblind_alive = False
+    lidar_lblind_time = time.time()
+    lidar_rblind_alive = False
+    lidar_rblind_time = time.time()
     while True:
       try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -453,6 +457,14 @@ class CarrotMan:
                     self.carrot_serv.right_blind = json_obj.get("right_blind")
                     r_blindspot_alive = True
                     r_blindspot_time = time.time()
+                  if "lidar_lblind" in json_obj:
+                    self.carrot_serv.lidar_lblind = json_obj.get("lidar_lblind")
+                    lidar_lblind_alive = True
+                    lidar_lblind_time = time.time()
+                  if "lidar_rblind" in json_obj:
+                    self.carrot_serv.lidar_rblind = json_obj.get("lidar_rblind")
+                    lidar_rblind_alive = True
+                    lidar_rblind_time = time.time()
 
                   if (self.carrot_serv.showDebugLog & 32) > 0:
                     print(f"receive: {json_obj}")
@@ -482,6 +494,12 @@ class CarrotMan:
               if r_blindspot_alive and (now - r_blindspot_time) > 10:
                 self.carrot_serv.right_blind = False
                 r_blindspot_alive = False
+              if lidar_lblind_alive and (now - lidar_lblind_time) > 10:
+                self.carrot_serv.lidar_lblind = False
+                lidar_lblind_alive = False
+              if lidar_rblind_alive and (now - lidar_rblind_time) > 10:
+                self.carrot_serv.lidar_rblind = False
+                lidar_rblind_alive = False
 
               if self.esp32_clients:
                 self.carrot_serv.ext_state = len(self.esp32_clients)

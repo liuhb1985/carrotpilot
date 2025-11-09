@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-状态管理模块 - 修复完整版
+状态管理模块 - 优化版
 负责系统状态的管理和维护
 """
 
@@ -171,7 +171,6 @@ class StatusManager:
                 'current_status': "就绪"
             })
             control_state['last_status_update_time'] = current_time
-            print("🔄 状态管理: 超时恢复等待状态")
         
         # 🆕 添加状态机检查
         state_timeout = 10000  # 10秒状态超时
@@ -187,7 +186,6 @@ class StatusManager:
                 'current_status': "就绪",
                 'overtakingCompleted': False
             })
-            print("🔄 超车完成，恢复就绪状态")
 
         # 情况2：长时间处于同一状态，强制刷新
         elif (control_state.get('last_status_update_time') and 
@@ -203,7 +201,6 @@ class StatusManager:
                     'overtakeReason': "状态超时，自动恢复",
                     'current_status': "就绪"
                 })
-                print("⏰ 状态超时，强制恢复就绪状态")
         
         # 🆕 情况3：检查完成定时器
         if control_state.get('completion_timer') and current_time - control_state['completion_timer'] > 2000:
@@ -214,7 +211,6 @@ class StatusManager:
                     'current_status': "就绪"
                 })
                 del control_state['completion_timer']
-                print("🔄 完成定时器触发，恢复就绪状态")
         
         # 更新状态时间戳
         control_state['last_status_update_time'] = current_time
@@ -282,9 +278,6 @@ class StatusManager:
             remaining = (control_state['dynamic_cooldown'] - (now - control_state['lastOvertakeTime'])) / 1000
             reasons.append(f"冷却时间剩余{remaining:.1f}秒")
 
-        # 这里需要获取可用方向，但在当前方法中不直接使用
-        # 实际使用时需要在调用处处理
-
         if trigger_conditions_met and reasons:
             reasons.insert(0, f"触发条件: {', '.join(trigger_conditions_met)}")
 
@@ -318,8 +311,6 @@ class StatusManager:
         control_state['overtakeState'] = "等待超车条件"
         control_state['overtakeReason'] = "分析道路情况中..."
         control_state['current_status'] = "就绪"
-
-        print("🔄 净变道次数和多源验证系统已重置")
 
     def get_status_data(self, vehicle_data, control_state, config, overtake_decision):
         """获取状态数据 - 保持与Web界面完全兼容"""

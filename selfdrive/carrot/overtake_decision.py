@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-超车决策模块 - 修复完整版
+超车决策模块 - 优化版
 负责超车条件判断和决策执行
 """
 
@@ -31,7 +31,6 @@ class OvertakeDecisionEngine:
                 return True
             else:
                 control_state['op_control_cooldown'] = 0
-                print("🔄 OP控制冷却时间结束")
 
         return False
 
@@ -54,16 +53,14 @@ class OvertakeDecisionEngine:
             if control_state['follow_start_time'] is None:
                 control_state['follow_start_time'] = now
                 control_state['is_following_slow_vehicle'] = True
-                print(f"🚗 开始跟车计时")
             follow_duration = now - control_state['follow_start_time']
             if follow_duration >= self.config['MAX_FOLLOW_TIME'] and not control_state['max_follow_time_reached']:
                 control_state['max_follow_time_reached'] = True
                 minutes = self.config['MAX_FOLLOW_TIME'] // 60000
                 control_state['overtakeReason'] = f"跟车时间超过{minutes}分钟，强制超车"
-                print(f"⏰ 达到最大跟车时间: {follow_duration/60000:.1f}分钟")
         else:
             if control_state['follow_start_time'] is not None:
-                print(f"🔄 重置跟车计时器")
+                pass
             control_state['follow_start_time'] = None
             control_state['is_following_slow_vehicle'] = False
             control_state['max_follow_time_reached'] = False
@@ -94,7 +91,6 @@ class OvertakeDecisionEngine:
         if condition_changed:
             control_state['condition_stability_timer'] = current_time
             control_state['condition_met_count'] += 1
-            print(f"🔄 条件变化，计数: {control_state['condition_met_count']}/{control_state['condition_met_threshold']}")
         else:
             # 条件稳定，检查持续时间
             if control_state['condition_stability_timer'] == 0:
@@ -109,7 +105,6 @@ class OvertakeDecisionEngine:
                 # 启用快速触发（在稳定后的短时间内可以快速响应）
                 control_state['quick_trigger_enabled'] = True
                 control_state['quick_trigger_start'] = current_time
-                print(f"✅ 条件稳定，启用快速触发 | 持续时间: {stable_duration:.0f}ms, 计数: {control_state['condition_met_count']}")
                 return True
         
         control_state['last_condition_check_time'] = current_time
@@ -184,7 +179,6 @@ class OvertakeDecisionEngine:
         if (is_slow_vehicle and is_not_traffic_jam and 
             is_significant_slowdown and is_proper_distance):
             
-            print(f"🚀 远距离超车触发: 前车{lead_speed}km/h vs 本车{current_speed}km/h (慢{speed_difference}km/h, {speed_ratio*100:.0f}%)")
             return True
         
         return False
@@ -322,9 +316,8 @@ class OvertakeDecisionEngine:
                 quick_trigger_timeout = 3000  # 快速触发超时3秒
                 if now - control_state.get('quick_trigger_start', now) > quick_trigger_timeout:
                     control_state['quick_trigger_enabled'] = False
-                    print("⏰ 快速触发超时，恢复正常检查")
                 else:
-                    print("🚀 快速触发模式，立即响应")
+                    pass
             
             if current_conditions:
                 trigger_reason = ", ".join(current_conditions)
@@ -370,7 +363,6 @@ class OvertakeDecisionEngine:
         if control_state['consecutive_failures'] > 3:
             penalty = min(10000, control_state['consecutive_failures'] * 2000)
             cooldown += penalty
-            print(f"⚠️ 连续失败{control_state['consecutive_failures']}次，增加冷却时间{penalty/1000}秒")
 
         if self.config['road_type'] == 'highway':
             cooldown = max(5000, cooldown * 0.8)
@@ -381,15 +373,20 @@ class OvertakeDecisionEngine:
         return cooldown
 
     def evaluate_overtake_effectiveness(self, vehicle_data, direction):
-        """评估超车有效性 - 修复版：改进侧车道无车评估"""
+        """评估超车有效性 - 增强数据可靠性检查"""
         if direction == "LEFT":
             side_lead_speed = vehicle_data['left_lead_speed']
             side_lead_distance = vehicle_data['left_lead_distance']
             side_relative_speed = vehicle_data['left_lead_relative_speed']
+            # 新增：数据可靠性检查
+            left_reliable_no_vehicle = vehicle_data.get('left_reliable_no_vehicle', False)
+            side_track_quality = vehicle_data.get('left_track_quality', 0)
         else:
             side_lead_speed = vehicle_data['right_lead_speed']
             side_lead_distance = vehicle_data['right_lead_distance']
             side_relative_speed = vehicle_data['right_lead_relative_speed']
+            right_reliable_no_vehicle = vehicle_data.get('right_reliable_no_vehicle', False)
+            side_track_quality = vehicle_data.get('right_track_quality', 0)
 
         current_speed = vehicle_data['v_ego_kph']
         current_lead_speed = vehicle_data['lead_speed']
@@ -398,16 +395,25 @@ class OvertakeDecisionEngine:
         effectiveness = 100
         reasons = []
 
-        # 优化：侧车道无车时给予最高评分
+        # 🎯 关键修复：区分"真正无车"和"可能数据丢失"
         if side_lead_distance <= 0:
-            # 侧车道无车，这是最理想的情况
-            effectiveness = 95  # 接近满分
-            reasons.append("✅ 目标车道畅通无车，理想超车条件")
-            
-            # 计算目标车道预期速度（无车时可以达到巡航速度）
+            if (direction == "LEFT" and left_reliable_no_vehicle) or \
+               (direction == "RIGHT" and right_reliable_no_vehicle):
+                # 可靠的无车状态
+                effectiveness = 90  # 稍降低分数，保持谨慎
+                reasons.append("✅ 目标车道确认畅通无车")
+            else:
+                # 可能的数据丢失，保守处理
+                effectiveness = 70  # 中等分数
+                reasons.append("⚠️ 目标车道可能无车，数据可靠性待确认")
+                
             expected_target_speed = vehicle_data['v_cruise_kph'] if vehicle_data['v_cruise_kph'] > 0 else current_speed + 15
         else:
-            # 侧车道有车时的原有逻辑保持不变
+            # 原有有车逻辑保持不变，但增加数据质量检查
+            if side_track_quality < 50:  # 跟踪质量低
+                effectiveness -= 20
+                reasons.append("⚠️ 侧车道数据跟踪质量较低")
+            
             # 情况1：目标车道有前车，且速度比当前前车更慢 - 严重惩罚
             if side_lead_speed > 0 and side_lead_speed < current_lead_speed - 2:
                 effectiveness -= 50
@@ -439,7 +445,7 @@ class OvertakeDecisionEngine:
         expected_current_speed = current_lead_speed if current_lead_speed > 0 else current_speed
         
         # 优化：根据是否有前车调整最小优势要求
-        if side_lead_distance <= 0:
+        if side_lead_distance <= 0 and ((direction == "LEFT" and left_reliable_no_vehicle) or (direction == "RIGHT" and right_reliable_no_vehicle)):
             min_advantage = 0  # 无车时不需要速度优势
         else:
             min_advantage = 5  # 有车时需要5km/h的速度优势
@@ -485,31 +491,42 @@ class OvertakeDecisionEngine:
         return is_effective, effectiveness, reasons
 
     def check_lane_safety(self, vehicle_data, side):
-        """检查车道安全性"""
+        """检查车道安全性 - 修复版本"""
         if side == "left":
-            if vehicle_data['l_lane_width'] < self.config['MIN_LANE_WIDTH']:
-                return False, "车道过窄⚠️禁止变道"
-            if vehicle_data['left_blindspot'] or vehicle_data['l_front_blind']:
+            # 检查盲区
+            if vehicle_data.get('left_blindspot', False) or vehicle_data.get('l_front_blind', False):
                 return False, "盲区有车⚠️禁止变道"
-            if vehicle_data['left_lead_distance'] > 0 and vehicle_data['left_lead_distance'] < self.config['SIDE_LEAD_DISTANCE_MIN']:
-                return False, "侧车过近⚠️禁止变道"
-            if abs(vehicle_data['left_lead_relative_speed']) > self.config['SIDE_RELATIVE_SPEED_THRESHOLD']:
-                return False, "侧车相对⚠️速度过高"
+            # 检查车道宽度
+            if vehicle_data.get('l_lane_width', 3.2) < self.config['MIN_LANE_WIDTH']:
+                return False, "车道过窄⚠️禁止变道"
+            # 检查距离
+            left_distance = vehicle_data.get('left_lead_distance', 0)
+            if left_distance > 0 and left_distance < 20.0:
+                return False, f"侧车过近⚠️{left_distance:.0f}m"
+            # 检查速度差异（只检查负值 - 慢车）
+            left_relative_speed = vehicle_data.get('left_lead_relative_speed', 0)
+            if left_relative_speed < -20.0:
+                return False, f"侧车过慢⚠️{left_relative_speed:.0f}km/h"
             return True, "安全"
 
         elif side == "right":
-            if vehicle_data['r_lane_width'] < self.config['MIN_LANE_WIDTH']:
-                return False, "车道过窄⚠️禁止变道"
-            if vehicle_data['right_blindspot'] or vehicle_data['r_front_blind']:
+            # 检查盲区
+            if vehicle_data.get('right_blindspot', False) or vehicle_data.get('r_front_blind', False):
                 return False, "盲区有车⚠️禁止变道"
-            if vehicle_data['right_lead_distance'] > 0 and vehicle_data['right_lead_distance'] < self.config['SIDE_LEAD_DISTANCE_MIN']:
-                return False, "侧车过近⚠️禁止变道"
-            if abs(vehicle_data['right_lead_relative_speed']) > self.config['SIDE_RELATIVE_SPEED_THRESHOLD']:
-                return False, "侧车相对⚠️速度过高"
+            # 检查车道宽度
+            if vehicle_data.get('r_lane_width', 3.2) < self.config['MIN_LANE_WIDTH']:
+                return False, "车道过窄⚠️禁止变道"
+            # 检查距离
+            right_distance = vehicle_data.get('right_lead_distance', 0)
+            if right_distance > 0 and right_distance < 20.0:
+                return False, f"侧车过近⚠️{right_distance:.0f}m"
+            # 检查速度差异（只检查负值 - 慢车）
+            right_relative_speed = vehicle_data.get('right_lead_relative_speed', 0)
+            if right_relative_speed < -20.0:
+                return False, f"侧车过慢⚠️{right_relative_speed:.0f}km/h"
             return True, "安全"
 
         return False, "未知方向"
-
     def evaluate_lane_suitability(self, vehicle_data, side):
         """评估车道适合度 - 优化版：改进无车情况评分"""
         current_lane = self.config['current_lane_number']
@@ -548,11 +565,16 @@ class OvertakeDecisionEngine:
                 penalty_score -= 15
 
             side_distance = vehicle_data['left_lead_distance']
-            # 优化：侧车道无车时给予奖励
+            # 优化：区分可靠无车和可能数据丢失
             if side_distance <= 0:
-                # 无车，理想情况，大幅奖励
-                penalty_score -= 25
-                analysis.append("✅ 侧方无车辆，畅通")
+                if vehicle_data.get('left_reliable_no_vehicle', False):
+                    # 可靠的无车状态
+                    penalty_score -= 20
+                    analysis.append("✅ 侧方确认无车辆")
+                else:
+                    # 可能的数据丢失
+                    penalty_score -= 5
+                    analysis.append("⚠️ 侧方可能无车，数据待确认")
             else:
                 if side_distance < self.config['SIDE_LEAD_DISTANCE_MIN']:
                     penalty_score += (self.config['SIDE_LEAD_DISTANCE_MIN'] - side_distance) * weights['side_lead_distance']
@@ -599,11 +621,16 @@ class OvertakeDecisionEngine:
                 penalty_score += 10
 
             side_distance = vehicle_data['right_lead_distance']
-            # 优化：侧车道无车时给予奖励
+            # 优化：区分可靠无车和可能数据丢失
             if side_distance <= 0:
-                # 无车，理想情况，大幅奖励
-                penalty_score -= 25
-                analysis.append("✅ 侧方无车辆，畅通")
+                if vehicle_data.get('right_reliable_no_vehicle', False):
+                    # 可靠的无车状态
+                    penalty_score -= 20
+                    analysis.append("✅ 侧方确认无车辆")
+                else:
+                    # 可能的数据丢失
+                    penalty_score -= 5
+                    analysis.append("⚠️ 侧方可能无车，数据待确认")
             else:
                 if side_distance < self.config['SIDE_LEAD_DISTANCE_MIN']:
                     penalty_score += (self.config['SIDE_LEAD_DISTANCE_MIN'] - side_distance) * weights['side_lead_distance']
@@ -650,49 +677,51 @@ class OvertakeDecisionEngine:
         return penalty, analysis
 
     def get_available_overtake_directions(self, vehicle_data):
-        """获取可用的超车方向"""
+        """获取可用的超车方向 - 修复版：整合安全检测"""
         current_lane = self.config['current_lane_number']
         total_lanes = self.config['lane_count']
 
         available_directions = []
-        debug_info = f"当前位置: 车道{current_lane}/{total_lanes}"
 
         if self.config['road_type'] == 'highway':
-            debug_info += " | 高速公路"
 
             if current_lane == 1:
+                # 最左侧车道：只能向右
                 if current_lane < total_lanes - 1:
                     available_directions.append("RIGHT")
-                    debug_info += " | 最左车道可向右"
                 else:
-                    debug_info += " | 最左车道但右侧只有应急车道"
+                    pass
 
             elif current_lane == total_lanes:
-                debug_info += " | 🚫 应急车道禁止行驶"
+                # 最右侧车道：只能向左
+                pass
 
             else:
+                # 中间车道：可以向左或向右
                 if current_lane > 1:
                     available_directions.append("LEFT")
-                    debug_info += " | 中间车道可向左"
 
                 if current_lane < total_lanes - 1:
                     available_directions.append("RIGHT")
-                    debug_info += " | 中间车道可向右"
                 elif current_lane == total_lanes - 1:
-                    debug_info += " | 右侧为应急车道，禁止向右"
+                    pass
 
         else:
-            debug_info += " | 普通道路"
+            # 普通道路
             if current_lane > 1:
                 available_directions.append("LEFT")
-                debug_info += " | 可向左"
             if current_lane < total_lanes and not self.is_emergency_lane(current_lane + 1, vehicle_data):
                 available_directions.append("RIGHT")
-                debug_info += " | 可向右"
 
-        print(f"🛣️ {debug_info}")
-        return available_directions
+        # 关键修复：安全检测过滤
+        safe_directions = []
+        for direction in available_directions:
+            side = "left" if direction == "LEFT" else "right"
+            is_safe, reason = self.check_lane_safety(vehicle_data, side)
+            if is_safe:
+                safe_directions.append(direction)
 
+        return safe_directions
     def is_emergency_lane(self, lane_number, vehicle_data):
         """判断是否为应急车道"""
         if self.config['road_type'] == 'highway' and lane_number == self.config['lane_count']:
